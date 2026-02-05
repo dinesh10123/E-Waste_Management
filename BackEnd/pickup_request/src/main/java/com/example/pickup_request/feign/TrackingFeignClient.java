@@ -10,7 +10,7 @@ import org.springframework.web.bind.annotation.RequestBody;
         path = "/api/tracking"
 )
 public interface TrackingFeignClient {
-
     @PostMapping("/status")
     void logStatus(@RequestBody CreateStatusRequestLogDTO requestDTO);
 }
+

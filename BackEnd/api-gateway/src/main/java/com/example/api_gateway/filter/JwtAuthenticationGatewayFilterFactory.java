@@ -1,31 +1,37 @@
 package com.example.api_gateway.filter;
 
-import io.jsonwebtoken.Claims;
-import io.jsonwebtoken.Jwts;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.cloud.gateway.filter.GatewayFilter;
 import org.springframework.cloud.gateway.filter.factory.AbstractGatewayFilterFactory;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
+import org.springframework.security.oauth2.jwt.ReactiveJwtDecoder; // Changed to Reactive
 import org.springframework.stereotype.Component;
 import org.springframework.web.server.ServerWebExchange;
 import reactor.core.publisher.Mono;
+
+import java.util.List;
+import java.util.Map;
 
 @Component
 public class JwtAuthenticationGatewayFilterFactory
         extends AbstractGatewayFilterFactory<JwtAuthenticationGatewayFilterFactory.Config> {
 
-    @Value("${jwt.secret}")
-    private String jwtSecret;
+    private final ReactiveJwtDecoder jwtDecoder; // Changed to Reactive
 
-    public JwtAuthenticationGatewayFilterFactory() {
+    public JwtAuthenticationGatewayFilterFactory(ReactiveJwtDecoder jwtDecoder) { // Changed in constructor
         super(Config.class);
+        this.jwtDecoder = jwtDecoder;
     }
 
     @Override
     public GatewayFilter apply(Config config) {
-
         return (exchange, chain) -> {
+            String path = exchange.getRequest().getURI().getPath();
+
+            // PUBLIC APIs
+            if (path.contains("/login") || path.contains("/register")) {
+                return chain.filter(exchange);
+            }
 
             String authHeader = exchange.getRequest()
                     .getHeaders()
@@ -37,44 +43,97 @@ public class JwtAuthenticationGatewayFilterFactory
 
             String token = authHeader.substring(7);
 
-            try {
-                Claims claims = Jwts.parser()
-                        .setSigningKey(jwtSecret.getBytes())
-                        .parseClaimsJws(token)
-                        .getBody();
+            // CHANGED: Use non-blocking decode() and flatMap()
+            return jwtDecoder.decode(token)
+                    .flatMap(jwt -> {
+                        String userId = jwt.getSubject(); // Keycloak UUID
 
-                String role = claims.get("role", String.class);
-                String path = exchange.getRequest().getURI().getPath();
+                        Map<String, Object> realmAccess = jwt.getClaim("realm_access");
+                        if (realmAccess == null || !realmAccess.containsKey("roles")) {
+                            return forbidden(exchange);
+                        }
 
-                // Allow access to tracking for BOTH ADMIN and USER
-                if (path.startsWith("/api/tracking")) {
-                    if (!"ROLE_ADMIN".equals(role) && !"ROLE_USER".equals(role)) {
-                        exchange.getResponse().setStatusCode(HttpStatus.FORBIDDEN);
-                        return exchange.getResponse().setComplete();
-                    }
-                }
+                        @SuppressWarnings("unchecked")
+                        List<String> roles = (List<String>) realmAccess.get("roles");
+                        
+                        // Debug log to terminal
+                        System.out.println("[Gateway Security] Path: " + path + " | Roles: " + roles);
 
-                // Forward the request
-                ServerWebExchange mutatedExchange = exchange.mutate()
-                        .request(exchange.getRequest().mutate()
-                                .header("X-User-Id", claims.getSubject())
-                                .header("X-User-Role", role)
-                                .build())
-                        .build();
+                        // RBAC CHECK
+                        if (!isAuthorized(roles, path)) {
+                            System.out.println("[Gateway Security] Access FORBIDDEN for " + path);
+                            return forbidden(exchange);
+                        }
+                        
+                        System.out.println("[Gateway Security] Access GRANTED for " + path);
 
-                return chain.filter(mutatedExchange);
+                        // FORWARD INFO TO MICROSERVICES
+                        ServerWebExchange mutatedExchange = exchange.mutate()
+                                .request(exchange.getRequest().mutate()
+                                        .header("X-User-Id", userId)
+                                        .header("X-User-Role", String.join(",", roles))
+                                        .build())
+                                .build();
 
-            } catch (Exception e) {
-                return unauthorized(exchange);
-            }
+                        return chain.filter(mutatedExchange);
+                    })
+                    .onErrorResume(e -> unauthorized(exchange)); // Handle invalid tokens
         };
     }
+
+    // RBAC logic remains the same...
+   private boolean isAuthorized(List<String> roles, String path) {
+    if (roles == null) return false;
+    
+    // Normalize roles to uppercase
+    List<String> upperRoles = roles.stream().map(String::toUpperCase).toList();
+
+    if (upperRoles.contains("ADMIN")) return true;
+
+    if (upperRoles.contains("USER")) {
+        // Allow common pickup and tracking access
+        // AND allow fetching disposal certificates
+        if (path.startsWith("/api/pickups") || 
+            path.startsWith("/api/tracking") ||
+            path.startsWith("/api/recycle/certificate")) {
+            return true;
+        }
+    }
+
+    if (upperRoles.contains("COLLECTOR")) {
+        // Allow collector-specific endpoints
+        if (path.startsWith("/api/pickups/collector") || 
+            path.startsWith("/api/users") ||
+            path.startsWith("/api/recycle") ||
+            path.contains("/status") ||
+            path.contains("/availability") ||
+            path.startsWith("/api/tracking")) {
+            return true;
+        }
+    }
+
+    if (upperRoles.contains("RECYCLER")) {
+        // Allow recycler endpoints
+        if (path.startsWith("/api/recycle") || 
+            path.contains("/availability") ||
+            path.startsWith("/api/users") ||
+            path.startsWith("/api/tracking")) {
+            return true;
+        }
+    }
+
+    return false;
+}
 
     private Mono<Void> unauthorized(ServerWebExchange exchange) {
         exchange.getResponse().setStatusCode(HttpStatus.UNAUTHORIZED);
         return exchange.getResponse().setComplete();
     }
 
-    public static class Config {
+    private Mono<Void> forbidden(ServerWebExchange exchange) {
+        exchange.getResponse().setStatusCode(HttpStatus.FORBIDDEN);
+        return exchange.getResponse().setComplete();
     }
+
+    public static class Config {}
 }

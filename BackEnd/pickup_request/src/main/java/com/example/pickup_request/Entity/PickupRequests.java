@@ -22,7 +22,7 @@ public class PickupRequests {
     private Integer requestId;
 
     @Column(name = "user_id", nullable = false)
-    private Integer userId;
+    private String userId;
 
     @Column(name = "request_date")
     private LocalDateTime requestDate;
@@ -35,4 +35,11 @@ public class PickupRequests {
 
     @Column(name = "status")
     private String status;
+
+    @Column(name = "collector_id")
+    private String collectorId;
+
+    @Column(name = "user_request_no")
+    private Integer userRequestNo;
+
 }
