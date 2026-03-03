@@ -56,10 +56,10 @@ public UserResponse register(RegisterRequest request) {
 
             Keycloak keycloak = KeycloakBuilder.builder()
                     .serverUrl(serverUrl)
-                    .realm("ewaste-realm")
+                    .realm("ewaste-management")
                     .grantType(OAuth2Constants.CLIENT_CREDENTIALS)
                     .clientId("admin-cli-sync")
-                    .clientSecret("HEJ7qPMxf0pccsd7MBMA1QkHVic2v8JD")
+                    .clientSecret(System.getenv("KEYCLOAK_CLIENT_SECRET") != null ? System.getenv("KEYCLOAK_CLIENT_SECRET") : "5tvKxYwE4LUZXHbEWGjL4mZjWayRlJKL")
                     .build();
 
             System.out.println("UserServiceImpl: Keycloak client built successfully");
@@ -77,7 +77,7 @@ public UserResponse register(RegisterRequest request) {
             userRep.setCredentials(Collections.singletonList(passwordCred));
 
             System.out.println("UserServiceImpl: Attempting to create user in Keycloak...");
-            Response response = keycloak.realm("ewaste-realm").users().create(userRep);
+            Response response = keycloak.realm("ewaste-management").users().create(userRep);
             System.out.println("UserServiceImpl: Keycloak response status: " + response.getStatus());
 
             if (response.getStatus() == 201) {
@@ -85,12 +85,12 @@ public UserResponse register(RegisterRequest request) {
                 System.out.println("UserServiceImpl: User created with ID: " + keycloakUserId);
                 // Assign Role in Keycloak
                 System.out.println("UserServiceImpl: Assigning role: " + request.getRoleName().toUpperCase());
-                RoleRepresentation realmRole = keycloak.realm("ewaste-realm").roles().get(request.getRoleName().toUpperCase()).toRepresentation();
-                keycloak.realm("ewaste-realm").users().get(keycloakUserId).roles().realmLevel().add(Collections.singletonList(realmRole));
+                RoleRepresentation realmRole = keycloak.realm("ewaste-management").roles().get(request.getRoleName().toUpperCase()).toRepresentation();
+                keycloak.realm("ewaste-management").users().get(keycloakUserId).roles().realmLevel().add(Collections.singletonList(realmRole));
                 System.out.println("UserServiceImpl: Keycloak user created and role assigned: " + keycloakUserId);
             } else if (response.getStatus() == 409) {
                 // User already exists in Keycloak! Find their ID instead of crashing
-                keycloakUserId = keycloak.realm("ewaste-realm").users().search(request.getEmail()).get(0).getId();
+                keycloakUserId = keycloak.realm("ewaste-management").users().search(request.getEmail()).get(0).getId();
                 System.out.println("UserServiceImpl: User existed in Keycloak, found ID: " + keycloakUserId);
             } else {
                 String errorBody = response.readEntity(String.class);
