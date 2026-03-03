@@ -1,16 +1,25 @@
-# Use OpenJDK 21
-FROM eclipse-temurin:21-jdk-alpine
-
-# Set working directory
+# Stage 1: Build with Maven
+FROM eclipse-temurin:21-jdk-alpine AS build
 WORKDIR /app
 
-# Copy the jar file
-# We assume the jar is built and located in target/
-# The wildcard handles version changes
-COPY target/*.jar app.jar
+# Copy Maven wrapper and pom.xml first (for caching)
+COPY mvnw .
+COPY .mvn .mvn
+COPY pom.xml .
 
-# Expose the service port (Default 8761 for Eureka, but configurable)
-EXPOSE 8761
+# Make mvnw executable
+RUN chmod +x mvnw
 
-# Run the application
+# Download dependencies (cached layer)
+RUN ./mvnw dependency:go-offline -B
+
+# Copy source code and build
+COPY src src
+RUN ./mvnw package -DskipTests -B
+
+# Stage 2: Run
+FROM eclipse-temurin:21-jre-alpine
+WORKDIR /app
+COPY --from=build /app/target/*.jar app.jar
+EXPOSE 9090
 ENTRYPOINT ["java", "-jar", "app.jar"]
